@@ -52,7 +52,7 @@ CStatus UThreadPool::init() {
 
     if (config_.monitor_enable_) {
         // 默认不开启监控线程
-        monitor_thread_ = std::move(std::thread(&UThreadPool::monitor, this));
+        monitor_thread_ = std::thread(&UThreadPool::monitor, this);
     }
     thread_record_map_.clear();
     thread_record_map_[(CSize)std::hash<std::thread::id>{}(std::this_thread::get_id())] = CGRAPH_MAIN_THREAD_ID;
@@ -93,6 +93,7 @@ CStatus UThreadPool::submit(const UTaskGroup& taskGroup, CMSec ttl) {
     CGRAPH_ASSERT_INIT(true)
 
     std::vector<std::future<CVoid>> futures;
+    futures.reserve(taskGroup.getSize());
     for (const auto& task : taskGroup.task_arr_) {
         futures.emplace_back(commit(task));
     }
@@ -105,9 +106,9 @@ CStatus UThreadPool::submit(const UTaskGroup& taskGroup, CMSec ttl) {
         const auto& futStatus = fut.wait_until(deadline);
         switch (futStatus) {
             case std::future_status::ready: break;    // 正常情况，直接返回了
-            case std::future_status::timeout: status += CErrStatus("thread status timeout"); break;
-            case std::future_status::deferred: status += CErrStatus("thread status deferred"); break;
-            default: status += CErrStatus("thread status unknown");
+            case std::future_status::timeout: status += CStatus("thread status timeout"); break;
+            case std::future_status::deferred: status += CStatus("thread status deferred"); break;
+            default: status += CStatus("thread status unknown");
         }
     }
 
@@ -251,7 +252,7 @@ CVoid UThreadPool::monitor() {
 
         // 如果 primary线程都在执行，则表示忙碌
         bool busy = !primary_threads_.empty() && std::all_of(primary_threads_.begin(), primary_threads_.end(),
-                                [](UThreadPrimaryPtr ptr) { return nullptr != ptr && ptr->is_running_; });
+                                [](UThreadPrimaryPtr ptr) { return ptr && ptr->is_running_; });
 
         CGRAPH_LOCK_GUARD lock(st_mutex_);
         // 如果忙碌或者priority_task_queue_中有任务，则需要添加 secondary线程

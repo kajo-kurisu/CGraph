@@ -2,7 +2,7 @@
 @Author: Chunel
 @Contact: chunel@foxmail.com
 @File: GStaticEngine.h
-@Time: 2022/12/11 16:34
+@Time: 2024/7/27 10:40
 @Desc: 
 ***************************/
 
@@ -10,7 +10,6 @@
 #define CGRAPH_GSTATICENGINE_H
 
 #include "../GEngine.h"
-#include "../../GGroup/GCluster/GCluster.h"
 
 CGRAPH_NAMESPACE_BEGIN
 
@@ -22,21 +21,11 @@ protected:
 
     CStatus run() override;
 
-    CStatus afterRunCheck() override;
-
-    /**
-     * 将所有注册到 pipeline 中的信息，解析到 para_cluster_arrs_ 中
-     * @param elements
-     * @return
-     */
-    CStatus analyse(const GSortedGElementPtrSet& elements);
-
 private:
-    ParaWorkedClusterArrs para_cluster_arrs_;        // 可以并行的cluster数组
-    CUint run_element_size_ = 0;                     // 当前已经执行的element的数量
-    CUint total_element_size_ = 0;                   // 总的element的数量
+    GElementPtrMat2D element_mat_ {};        // 解图后的elements信息
 
     friend class UAllocator;
+    friend class GElementManager;
 };
 
 CGRAPH_NAMESPACE_END

@@ -11,3 +11,6 @@
 /.scannerwork/
 .vscode/
 /.cache/
+/bazel-*
+/MODULE.bazel
+/MODULE.bazel.lock

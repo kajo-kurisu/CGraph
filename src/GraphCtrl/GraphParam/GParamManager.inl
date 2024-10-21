@@ -23,12 +23,12 @@ CStatus GParamManager::create(const std::string& key, CBool backtrace) {
         /* 如果是重复创建，则返回ok；非重复创建（类型不同）则返回err */
         auto param = result->second;
         return (typeid(*param).name() == typeid(T).name()) ?
-               CStatus() : CErrStatus("create [" + key + "] param duplicate");
+               CStatus() : CStatus("create [" + key + "] param duplicate");
     }
 
     T* ptr = CGRAPH_SAFE_MALLOC_COBJECT(T)
-    ((GParamPtr)ptr)->backtrace_enable_ = backtrace;
     ((GParamPtr)ptr)->key_ = key;
+    ((GParamPtr)ptr)->backtrace_enable_ = backtrace;
     params_map_.insert(std::pair<std::string, T*>(key, ptr));
     CGRAPH_FUNCTION_END
 }

@@ -24,8 +24,6 @@ protected:
 
     CStatus run() override;
 
-    CStatus afterRunCheck() override;
-
 private:
     GElementPtrArr topo_elements_ {};       // 拓扑排序后的
 
