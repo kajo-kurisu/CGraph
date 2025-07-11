@@ -6,8 +6,7 @@ cc_library(
                 "MyGEvent/**/*.h",
                 "MyGMutable/**/*.h",
                 "MyGNode/**/*.h",
-                "MyParams/**/*.h",
-                "MyUtils/**/*.h",]),
+                "MyParams/**/*.h",]),
     visibility = ["//visibility:public"],
 )
 
@@ -32,7 +31,7 @@ CGRAPH_TUTORIAL_LIST = [
          "T17-MessagePubSub",
          "T18-Event",
          "T19-Cancel",
-         "T20-YieldResume",
+         "T20-Suspend",
          "T21-MultiCondition",
          "T22-Timeout",
          "T23-Some",
@@ -40,6 +39,7 @@ CGRAPH_TUTORIAL_LIST = [
          "T25-Coordinator",
          "T26-Mutable",
          "T27-Trim",
+         "T28-Stage",
         ]
 
 [

@@ -22,7 +22,7 @@ GElement::~GElement() {
 }
 
 
-CVoid GElement::beforeRun() {
+CVoid GElement::refresh() {
     this->done_ = false;
     this->left_depend_.store(dependence_.size(), std::memory_order_release);
 }
@@ -160,7 +160,7 @@ CStatus GElement::addDependGElements(const GElementPtrSet& elements) {
 
     for (GElementPtr element: elements) {
         CGRAPH_ASSERT_NOT_NULL(element)
-        CGRAPH_RETURN_ERROR_STATUS_BY_CONDITION((element->belong_ != this->belong_),     \
+        CGRAPH_RETURN_ERROR_STATUS_BY_CONDITION((element->belong_ != this->belong_),    \
         element->getName() + " cannot depend because not same belong info")
         if (this == element) {
             continue;
@@ -190,17 +190,16 @@ CStatus GElement::addElementInfo(const GElementPtrSet& depends,
 }
 
 
-CStatus GElement::addManagers(GParamManagerPtr paramManager, GEventManagerPtr eventManager) {
+CStatus GElement::addManagers(GParamManagerPtr paramManager,
+                              GEventManagerPtr eventManager,
+                              GStageManagerPtr stageManager) {
     CGRAPH_FUNCTION_BEGIN
     CGRAPH_ASSERT_INIT(false)
-    CGRAPH_ASSERT_NOT_NULL(paramManager, eventManager)
+    CGRAPH_ASSERT_NOT_NULL(paramManager, eventManager, stageManager)
 
     this->setGParamManager(paramManager);
     this->setGEventManager(eventManager);
-    if (aspect_manager_) {
-        aspect_manager_->setGParamManager(paramManager);
-        aspect_manager_->setGEventManager(eventManager);
-    }
+    this->setGStageManager(stageManager);
 
     CGRAPH_FUNCTION_END
 }
@@ -247,12 +246,12 @@ CStatus GElement::fatProcessor(const CFunctionType& type) {
                     do {
                         status += isAsync() ? asyncRun() : run();
                         /**
-                         * 在实际run结束之后，首先需要判断一下是否进入yield状态了。
+                         * 在实际run结束之后，首先需要判断一下是否进入suspend状态了。
                          * 接下来，如果状态是ok的，并且被条件hold住，则循环执行
                          * 默认所有element的isHold条件均为false，即不hold，即执行一次
                          * 可以根据需求，对任意element类型，添加特定的isHold条件
                          * */
-                    } while (checkYield(), this->isHold() && status.isOK());
+                    } while (checkSuspend(), this->isHold() && status.isOK());
                     doAspect(internal::GAspectType::FINISH_RUN, status);
                 }
 
@@ -432,10 +431,14 @@ CVoid GElement::dumpPerfInfo(std::ostream& oss) {
 }
 
 
-CVoid GElement::checkYield() {
-    std::unique_lock<std::mutex> lk(yield_mutex_);
-    this->yield_cv_.wait(lk, [this] {
-        return GElementState::YIELD != cur_state_.load(std::memory_order_acquire);
+CVoid GElement::checkSuspend() {
+    if (GElementState::SUSPEND != cur_state_.load(std::memory_order_acquire)) {
+        return;
+    }
+
+    std::unique_lock<std::mutex> lk(suspend_locker_.mtx_);
+    this->suspend_locker_.cv_.wait(lk, [this] {
+        return GElementState::SUSPEND != cur_state_.load(std::memory_order_acquire);
     });
 }
 
@@ -466,18 +469,13 @@ GElementState GElement::getCurState() const {
 }
 
 
-CIndex GElement::getBindingIndex() const {
-    return this->binding_index_;
+CSize GElement::getLoop() const {
+    return loop_;
 }
 
 
-GElementRelation GElement::getRelation() const {
-    GElementRelation relation;
-    relation.predecessors_ = this->dependence_.asVector();    // 前驱
-    relation.successors_ = this->run_before_.asVector();    // 后继
-    relation.belong_ = this->belong_;    // 从属信息
-
-    return relation;
+CIndex GElement::getBindingIndex() const {
+    return this->binding_index_;
 }
 
 
@@ -492,6 +490,17 @@ CStatus GElement::removeDepend(GElementPtr element) {
     element->run_before_.remove(this);
     left_depend_.store(dependence_.size(), std::memory_order_release);
     CGRAPH_FUNCTION_END
+}
+
+
+GElementRelation GElement::getRelation() const {
+    GElementRelation relation;
+    relation.predecessors_ = this->dependence_.asVector();    // 前驱
+    relation.successors_ = this->run_before_.asVector();    // 后继
+    relation.children_ = this->getChildren();
+    relation.belong_ = this->belong_;    // 从属信息
+
+    return relation;
 }
 
 
@@ -578,8 +587,74 @@ GElementPtrArr GElement::getDeepPath(CBool reverse) const {
 }
 
 
+GElementPtrArr GElement::getChildren() const {
+    (void)(this);
+    return GElementPtrArr{};
+}
+
+
 CBool GElement::isDefaultBinding() const {
     return CGRAPH_DEFAULT_BINDING_INDEX == binding_index_;
+}
+
+
+GElementPtr GElement::updateAspectInfo() {
+    // 在所有 element 初始化之前执行，确保切面的信息ok
+    if (aspect_manager_) {
+        aspect_manager_->setGParamManager(param_manager_);
+        aspect_manager_->setGEventManager(event_manager_);
+        aspect_manager_->setBelong(this);
+    }
+    return this;
+}
+
+
+GElementPtr GElement::__addGAspect_4py(GAspectPtr aspect) {
+    CGRAPH_ASSERT_NOT_NULL_THROW_ERROR(aspect)
+    if (!aspect_manager_) {
+        aspect_manager_ = CGRAPH_SAFE_MALLOC_COBJECT(GAspectManager)
+    }
+
+    aspect_manager_->add(aspect);
+    return this;
+}
+
+
+CStatus GElement::__enterStage_4py(const std::string& key) {
+    return enterStage(key);
+}
+
+
+CBool GElement::__isTimeout_4py() {
+    return isTimeout();
+}
+
+
+std::string GElement::__str_4py() {
+    // python 中 print 展示的格式
+    std::string info = "<name=" + this->getName() +
+                       ", session=" + this->getSession() + ", loop=" + std::to_string(this->getLoop());
+    auto relation = this->getRelation();
+    if (relation.belong_) {
+        info += ", belong=" + relation.belong_->getName();
+    }
+
+    auto toStr = [](const GElementPtrArr& arr, const std::string& key, std::string& result){
+        if (!arr.empty()) {
+            result += ", " + key + "=[";
+            for (CSize i = 0; i < arr.size() - 1; i++) {
+                result += arr[i]->getName() + ",";
+            }
+            result += arr.back()->getName() + "]";
+        }
+    };
+
+    toStr(relation.successors_, "successors", info);
+    toStr(relation.predecessors_, "predecessors", info);
+    toStr(relation.children_, "children", info);
+
+    info += ">";
+    return info;
 }
 
 CGRAPH_NAMESPACE_END

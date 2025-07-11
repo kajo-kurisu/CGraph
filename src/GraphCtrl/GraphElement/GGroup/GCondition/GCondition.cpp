@@ -35,18 +35,13 @@ CStatus GCondition::run() {
 }
 
 
-CSize GCondition::getRange() const {
-    return group_elements_arr_.size();
-}
-
-
 CVoid GCondition::dump(std::ostream& oss) {
     dumpElement(oss);
     dumpGroupLabelBegin(oss);
     oss << 'p' << this << "[shape=diamond];\n";
     oss << "color=blue;\n";
 
-    for (auto i = 0; i < group_elements_arr_.size(); ++i) {
+    for (CSize i = 0; i < group_elements_arr_.size(); ++i) {
         const auto& cur = group_elements_arr_[i];
         cur->dump(oss);
 

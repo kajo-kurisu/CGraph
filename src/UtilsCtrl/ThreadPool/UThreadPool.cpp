@@ -56,6 +56,7 @@ CStatus UThreadPool::init() {
     }
     thread_record_map_.clear();
     thread_record_map_[(CSize)std::hash<std::thread::id>{}(std::this_thread::get_id())] = CGRAPH_MAIN_THREAD_ID;
+    task_queue_.setup();
     primary_threads_.reserve(config_.default_thread_size_);
     for (int i = 0; i < config_.default_thread_size_; i++) {
         auto* pt = CGRAPH_SAFE_MALLOC_COBJECT(UThreadPrimary);    // 创建核心线程数
@@ -70,8 +71,8 @@ CStatus UThreadPool::init() {
      * 参考： https://github.com/ChunelFeng/CGraph/issues/309
      */
     for (int i = 0; i < config_.default_thread_size_; i++) {
-         status += primary_threads_[i]->init();
-         thread_record_map_[(CSize)std::hash<std::thread::id>{}(primary_threads_[i]->thread_.get_id())] = i;
+        status += primary_threads_[i]->init();
+        thread_record_map_[(CSize)std::hash<std::thread::id>{}(primary_threads_[i]->thread_.get_id())] = i;
      }
     CGRAPH_FUNCTION_CHECK_STATUS
 
@@ -160,7 +161,9 @@ CStatus UThreadPool::destroy() {
         CGRAPH_DELETE_PTR(pt)
     }
     primary_threads_.clear();
+
     // secondary 线程是智能指针，不需要delete
+    task_queue_.reset();
     for (auto &st : secondary_threads_) {
         status += st->destroy();
     }
@@ -187,7 +190,7 @@ CStatus UThreadPool::releaseSecondaryThread(CInt size) {
         !(*iter)->done_ ? secondary_threads_.erase(iter++) : iter++;
     }
 
-    CGRAPH_RETURN_ERROR_STATUS_BY_CONDITION((size > secondary_threads_.size()),    \
+    CGRAPH_RETURN_ERROR_STATUS_BY_CONDITION((size > (CInt)secondary_threads_.size()),    \
                                             "cannot release [" + std::to_string(size) + "] secondary thread,"    \
                                             + "only [" + std::to_string(secondary_threads_.size()) + "] left.")
 
@@ -204,10 +207,6 @@ CStatus UThreadPool::releaseSecondaryThread(CInt size) {
 CIndex UThreadPool::dispatch(CIndex origIndex) {
     CIndex realIndex = 0;
     if (CGRAPH_DEFAULT_TASK_STRATEGY == origIndex) {
-        /**
-         * 如果是默认策略信息，在[0, default_thread_size_) 之间的，通过 thread 中queue来调度
-         * 在[default_thread_size_, max_thread_size_) 之间的，通过 pool 中的queue来调度
-         */
         realIndex = cur_index_++;
         if (cur_index_ >= config_.max_thread_size_ || cur_index_ < 0) {
             cur_index_ = 0;
@@ -264,6 +263,17 @@ CVoid UThreadPool::monitor() {
         for (auto iter = secondary_threads_.begin(); iter != secondary_threads_.end(); ) {
             (*iter)->freeze() ? secondary_threads_.erase(iter++) : iter++;
         }
+    }
+}
+
+
+CVoid UThreadPool::wakeupAllThread() {
+    for (auto& pt : primary_threads_) {
+        pt->wakeup();
+    }
+
+    for (auto& st : secondary_threads_) {
+        st->wakeup();
     }
 }
 

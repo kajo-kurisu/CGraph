@@ -8,6 +8,7 @@
 
 #include "GElementRepository.h"
 #include "GNode/GNodeInclude.h"
+#include "GGroup/GGroupInclude.h"
 
 CGRAPH_NAMESPACE_BEGIN
 
@@ -66,13 +67,36 @@ CStatus GElementRepository::pushAllState(const GElementState& state) {
 
     for (auto& cur : elements_) {
         cur->cur_state_.store(state, std::memory_order_release);
-        if (GElementState::YIELD != state) {
-            // 目前仅非yield状态，需要切换的。如果一直处于 yield状态，是不需要被通知的
-            cur->yield_cv_.notify_one();
+        if (GElementState::SUSPEND != state) {
+            // 目前仅非 suspend 状态，需要切换的。如果一直处于 suspend 状态，是不需要被通知的
+            cur->suspend_locker_.cv_.notify_one();
         }
     }
     cur_state_ = state;    // 记录当前的状态信息
     CGRAPH_FUNCTION_END
+}
+
+
+CVoid GElementRepository::fetch(GElementManagerCPtr em) {
+    CGRAPH_ASSERT_NOT_NULL_THROW_ERROR(em)
+    for (GElementPtr cur : em->manager_elements_) {
+        /**
+         * 从 pipeline 的 element manager 中，逐层添加查询
+         * 查询到如果pipeline中，存在没有注册到 repo 中element，则写入 repo中
+         * 主要针对 python 注册场景中 直接创建 element 放入group 的场景
+         */
+        if (this->find(cur)) {
+            continue;
+        }
+
+        if (cur->isGGroup()) {
+            auto group = dynamic_cast<GGroupPtr>(cur);
+            CGRAPH_ASSERT_NOT_NULL_THROW_ERROR(group);
+            group->pushElements(elements_);
+        } else {
+            elements_.insert(cur);
+        }
+    }
 }
 
 
@@ -98,6 +122,7 @@ CStatus GElementRepository::init() {
         CGRAPH_ASSERT_NOT_NULL(element)
         status = element->checkSuitable();
         CGRAPH_FUNCTION_CHECK_STATUS
+        element->updateAspectInfo();
 
         if (element->isAsync()) {
             async_elements_.emplace(element);
@@ -118,7 +143,7 @@ CStatus GElementRepository::destroy() {
      * 当程序 cancel完成之后，就会重新恢复 CREATE的状态
      * 问题详见: https://github.com/ChunelFeng/CGraph/issues/153
      */
-    status = pushAllState(GElementState::CREATE);
+    status = pushAllState(GElementState::NORMAL);
     CGRAPH_FUNCTION_END
 }
 

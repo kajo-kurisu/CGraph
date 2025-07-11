@@ -149,6 +149,12 @@ public:
     GElementState getCurState() const;
 
     /**
+     * 获取loop值信息
+     * @return
+     */
+    CSize getLoop() const;
+
+    /**
      * 删除一个依赖的节点信息
      * @param element
      * @return
@@ -157,15 +163,10 @@ public:
     CStatus removeDepend(GElement* element);
 
     /**
-     * 获取对应的ptr类型
-     * @tparam T
-     * @param ptr
-     * @param allowEmpty
+     * 获取当前节点的相关关系信息，包含前驱、后继、从属关系、包含元素
      * @return
      */
-    template<typename T,
-            c_enable_if_t<std::is_base_of<GElement, T>::value, int> = 0>
-    T* getPtr(CBool allowEmpty = true);
+    GElementRelation getRelation() const;
 
     /**
      * 实现连续注册的语法糖，形如：
@@ -256,12 +257,6 @@ protected:
      */
     CIndex getBindingIndex() const;
 
-    /**
-     * 获取当前节点的相关关系信息，包含前驱、后继、从属关系
-     * @return
-     */
-    GElementRelation getRelation() const;
-
     CGRAPH_NO_ALLOWED_COPY(GElement);
 
 /********************************/
@@ -269,10 +264,10 @@ protected:
 /********************************/
 private:
     /**
-     * run方法执行之前的执行函数
+     * 恢复运行最初的信息
      * @return
      */
-    CVoid beforeRun();
+    CVoid refresh();
 
     /**
      * 判定当前的内容，是否需要异步执行
@@ -321,10 +316,12 @@ private:
      * 设置manager信息
      * @param paramManager
      * @param eventManager
+     * @param stageManager
      * @return
      */
     virtual CStatus addManagers(GParamManagerPtr paramManager,
-                                GEventManagerPtr eventManager);
+                                GEventManagerPtr eventManager,
+                                GStageManagerPtr stageManager);
 
     /**
      * 包含切面相关功能的函数，fat取自fatjar的意思
@@ -379,10 +376,10 @@ private:
     CVoid dumpPerfInfo(std::ostream& oss);
 
     /**
-     * 判断是否进入 yield状态。如果是的话，则等待恢复。未进入yield状态，则继续运行
+     * 判断是否进入 suspend 状态。如果是的话，则等待恢复。未进入 suspend 状态，则继续运行
      * @return
      */
-    CVoid checkYield();
+    CVoid checkSuspend();
 
     /**
      * 判断当前元素，是否可以线性执行。默认返回true
@@ -427,13 +424,26 @@ private:
      */
     CBool isDefaultBinding() const;
 
+    /**
+     * 更新切面信息
+     * @return
+     */
+    GElement* updateAspectInfo();
+
+    /**
+     * 获取其中包含的内容
+     * @return
+     * @notice 仅在为 group 的情况下有意义
+     */
+    virtual std::vector<GElement *> getChildren() const;
+
 private:
     /** 状态相关信息 */
     CBool done_ { false };                                                    // 判定被执行结束
     CBool visible_ { true };                                                  // 判定可见的，如果被删除的话，则认为是不可见的
     CBool is_init_ { false };                                                 // 判断是否init
     GElementType element_type_ { GElementType::ELEMENT };                     // 用于区分element 内部类型
-    std::atomic<GElementState> cur_state_ { GElementState::CREATE };       // 当前执行状态
+    std::atomic<GElementState> cur_state_ { GElementState::NORMAL };          // 当前执行状态
     internal::GElementShape shape_ { internal::GElementShape::NORMAL };       // 元素位置类型
 
     /** 配置相关信息 */
@@ -453,14 +463,13 @@ private:
 
     /** 图相关信息 */
     std::atomic<CSize> left_depend_ { 0 };                                    // 当 left_depend_ 值为0的时候，即可以执行该element信息
-    USmallVector<GElement *> run_before_;                                     // 被依赖的节点（后继）
-    USmallVector<GElement *> dependence_;                                     // 依赖的节点信息（前驱）
+    USmallVector<GElement *> run_before_ {};                                  // 被依赖的节点（后继）
+    USmallVector<GElement *> dependence_ {};                                  // 依赖的节点信息（前驱）
     GElement* belong_ { nullptr };                                            // 从属的element 信息，如为nullptr，则表示从属于 pipeline
 
     /** 异步执行相关信息 */
     std::future<CStatus> async_result_;                                       // 用于记录当前节点的异步执行情况
-    std::mutex yield_mutex_;                                                  // 控制停止执行的锁
-    std::condition_variable yield_cv_;                                        // 控制停止执行的条件变量
+    UCvMutex suspend_locker_;                                                 // 控制停止执行锁信息
 
     friend class GNode;
     friend class GGroup;
@@ -492,9 +501,17 @@ private:
 
     CGRAPH_DECLARE_GPARAM_MANAGER_WRAPPER_WITH_MEMBER
     CGRAPH_DECLARE_GEVENT_MANAGER_WRAPPER_WITH_MEMBER
+    CGRAPH_DECLARE_GSTAGE_MANAGER_WRAPPER_WITH_MEMBER
+
+public:
+    GElement* __addGAspect_4py(GAspectPtr aspect);
+    CStatus __enterStage_4py(const std::string& key);
+    CBool __isTimeout_4py();
+    std::string __str_4py();
 };
 
 using GElementRef = GElement &;
+using GElementCRef = const GElement &;
 using GElementPtr = GElement *;
 using GElementCPtr = const GElement *;
 using GElementPPtr = GElementPtr *;

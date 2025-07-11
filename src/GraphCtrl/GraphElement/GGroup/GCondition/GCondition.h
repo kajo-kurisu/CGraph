@@ -25,12 +25,6 @@ protected:
      */
     virtual CIndex choose() = 0;
 
-    /**
-     * 获取当前condition组内部元素的个数
-     * @return
-     */
-    CSize getRange() const;
-
 private:
     CVoid dump(std::ostream& oss) final;
 

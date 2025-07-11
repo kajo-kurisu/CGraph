@@ -13,6 +13,7 @@
 #include <memory>
 #include <list>
 #include <thread>
+#include <future>
 #include <sstream>
 
 #include "GPipelineObject.h"
@@ -20,6 +21,7 @@
 #include "../GraphElement/GElementInclude.h"
 #include "../GraphDaemon/GDaemonInclude.h"
 #include "../GraphEvent/GEventInclude.h"
+#include "../GraphStage/GStageInclude.h"
 
 CGRAPH_NAMESPACE_BEGIN
 
@@ -41,16 +43,19 @@ public:
 
     /**
      * 异步执行pipeline的run流程
+     * @param policy
      * @return
      */
-    std::future<CStatus> asyncRun();
+    std::future<CStatus> asyncRun(std::launch policy = std::launch::async);
 
     /**
      * 异步执行pipeline的全部流程
      * @param runTimes
+     * @param policy
      * @return
      */
-    std::future<CStatus> asyncProcess(CSize runTimes = CGRAPH_DEFAULT_LOOP_TIMES);
+    std::future<CStatus> asyncProcess(CSize runTimes = CGRAPH_DEFAULT_LOOP_TIMES,
+                                      std::launch policy = std::launch::async);
 
     /**
      * 停止执行流程，多用于异步执行流程中
@@ -62,7 +67,7 @@ public:
       * 暂停当前pipeline的执行，多用于异步执行流程中
       * @return
       */
-     CStatus yield();
+     CStatus suspend();
 
      /**
       * 恢复当前pipeline的执行，多用于异步执行流程中
@@ -318,6 +323,20 @@ public:
     GPipeline* addGEvent(const std::string& key, TParam* param = nullptr);
 
     /**
+     * 添加一个阶段
+     * @tparam TStage
+     * @tparam TParam
+     * @param key
+     * @param threshold
+     * @param param
+     * @return
+     */
+    template<typename TStage, typename TParam = GStageDefaultParam,
+            c_enable_if_t<std::is_base_of<GStage, TStage>::value, int> = 0,
+            c_enable_if_t<std::is_base_of<GStageParam, TParam>::value, int> = 0>
+    GPipeline* addGStage(const std::string& key, CInt threshold, TParam* param = nullptr);
+
+    /**
      * 设置引擎策略
      * @param type
      * @return
@@ -410,13 +429,23 @@ private:
     GParamManagerPtr param_manager_ = nullptr;                  // 参数管理类
     GDaemonManagerPtr daemon_manager_ = nullptr;                // 守护管理类
     GEventManagerPtr event_manager_ = nullptr;                  // 事件管理类
+    GStageManagerPtr stage_manager_ = nullptr;                  // 阶段管理类
 
     GSchedule schedule_;                                        // 调度管理类
     GElementRepository repository_;                             // 记录创建的所有element的仓库
 
     friend class GPipelineFactory;
-    friend class UAllocator;
+    friend class CAllocator;
     friend class GPerf;
+
+public:
+    CStatus __registerGElement_4py(GElementPtr element, const GElementPtrSet &depends,
+                                   const std::string &name, CSize loop);
+    GPipeline* __addGEvent_4py(GEventPtr event, const std::string& key);
+    GPipeline* __addGDaemon_4py(GDaemonPtr daemon, CMSec ms);
+    GPipeline* __addGStage_4py(GStagePtr stage, const std::string& key, CInt threshold);
+    std::string __dump_4py();
+    std::string __perf_4py();
 };
 
 using GPipelinePtr = GPipeline *;

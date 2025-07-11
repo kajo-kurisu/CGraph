@@ -19,24 +19,34 @@ CGRAPH_NAMESPACE_BEGIN
 /* 所有节点组合的基类，所有节点组合功能，均继承自此类 */
 class GGroup : public GElement {
 protected:
+    CBool isSerializable() const override;
+
+    explicit GGroup();
+
+private:
     /**
      * 向group中，添加element信息
      * @param element
      * @return
      */
-    virtual CStatus addElement(GElementPtr element);
+    CStatus addElement(GElementPtr element);
 
-    CBool isSerializable() const override;
-
-private:
-    explicit GGroup();
+    /**
+     * 在添加element的时候，附加选项
+     * @param element
+     * @return
+     */
+    virtual CStatus addElementEx(GElementPtr element);
 
     CStatus addManagers(GParamManagerPtr paramManager,
-                        GEventManagerPtr eventManager) override;
+                        GEventManagerPtr eventManager,
+                        GStageManagerPtr stageManager) override;
 
     CStatus init() override;
 
     CStatus destroy() override;
+
+    GElementPtrArr getChildren() const override;
 
     /**
      * 生成graphviz中 group对应的label 的开头信息
@@ -61,6 +71,13 @@ private:
      */
     virtual CBool isSeparate(GElementCPtr a, GElementCPtr b) const;
 
+    /**
+     * 将group内部的所有element（包含子group中的）写入repo中
+     * @param repo
+     * @return
+     */
+    CVoid pushElements(GElementPtrSet& repo);
+
 private:
     GElementPtrArr group_elements_arr_;    // 存放 element的数组
 
@@ -69,8 +86,12 @@ private:
     friend class GRegion;
     friend class GCondition;
     friend class GMutable;
+    friend class GElementRepository;
     template<GMultiConditionType> friend class GMultiCondition;
     template<CInt> friend class GSome;
+
+public:
+    CStatus __addGElements_4py(const GElementPtrArr& elements);
 };
 
 using GGroupPtr = GGroup *;

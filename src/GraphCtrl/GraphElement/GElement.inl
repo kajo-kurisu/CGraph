@@ -9,6 +9,8 @@
 #ifndef CGRAPH_GELEMENT_INL
 #define CGRAPH_GELEMENT_INL
 
+#include <typeinfo>
+
 #include "GElement.h"
 
 CGRAPH_NAMESPACE_BEGIN
@@ -24,7 +26,7 @@ GElementPtr GElement::addGAspect(TParam* param) {
 
     GAspectPtr aspect = CGRAPH_SAFE_MALLOC_COBJECT(TAspect)
     aspect->setAParam<TParam>(param);
-    aspect->setBelong(this);
+    // 为了适配 python版本，所有的aspect的信息填充，放到 pipeline 初始化之前的瞬间，统一做掉了
     aspect_manager_->add(aspect);
     return this;
 }
@@ -37,8 +39,7 @@ GElementPtr GElement::addGAspect(Args... args) {
         aspect_manager_ = CGRAPH_SAFE_MALLOC_COBJECT(GAspectManager)
     }
 
-    auto aspect = UAllocator::safeMallocTemplateCObject<TAspect>(std::forward<Args>(args)...);
-    aspect->setBelong(this);
+    auto aspect = CAllocator::safeMallocTemplateCObject<TAspect>(std::forward<Args>(args)...);
     aspect_manager_->add(aspect);
     return this;
 }
@@ -56,25 +57,21 @@ GElementPtr GElement::addEParam(const std::string& key, T* param) {
     T* cur = CGRAPH_SAFE_MALLOC_COBJECT(T);
     cur->clone(param);
 
-    local_params_[key] = cur;    // 写入其中
+    local_params_[key] = cur;
     return this;
 }
 
 
 template<typename T,
-        c_enable_if_t<std::is_base_of<GElementParam, T>::value, int> >
+        c_enable_if_t<std::is_base_of<GElementParam, T>::value, int>>
 T* GElement::getEParam(const std::string& key) {
     auto iter = local_params_.find(key);
-    return dynamic_cast<T *>((iter != local_params_.end()) ? iter->second : nullptr);
-}
+    if (iter == local_params_.end()) {
+        return nullptr;
+    }
 
-
-template<typename T,
-        c_enable_if_t<std::is_base_of<GElement, T>::value, int>>
-T* GElement::getPtr(CBool allowEmpty) {
-    T* ptr = dynamic_cast<T *>(this);
-    CGRAPH_THROW_EXCEPTION_BY_CONDITION(!allowEmpty && !ptr, "change ptr type failed")
-    return ptr;
+    auto param = iter->second;
+    return likely(typeid(T) == typeid(*param)) ? static_cast<T *>(param) : nullptr;
 }
 
 CGRAPH_NAMESPACE_END

@@ -47,13 +47,16 @@ protected:
 
     CVoidPtr setGEventManager(GEventManagerPtr em) final;
 
+    CVoidPtr setBelong(GElement* belong);
+
     CGRAPH_NO_ALLOWED_COPY(GAspectManager)
 
 private:
     GAspectPtrArr aspect_arr_;     // 存储aspect的容器
 
     friend class GElement;
-    friend class UAllocator;
+    friend class CAllocator;
+    friend class GElementManager;
 };
 
 using GAspectManagerPtr = GAspectManager *;

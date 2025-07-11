@@ -16,9 +16,10 @@ CGRAPH_NAMESPACE_BEGIN
 
 template<GMultiConditionType type>
 class GMultiCondition : public GCondition {
-private:
+protected:
     explicit GMultiCondition();
 
+private:
     CStatus run() final;
 
     /**
@@ -40,7 +41,7 @@ private:
     CBool isSeparate(GElementCPtr a, GElementCPtr b) const final;
 
     friend class GPipeline;
-    friend class UAllocator;
+    friend class CAllocator;
 };
 
 CGRAPH_NAMESPACE_END

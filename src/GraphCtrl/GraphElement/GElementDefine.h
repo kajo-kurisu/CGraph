@@ -37,10 +37,9 @@ enum class GElementType {
 
 
 enum class GElementState {
-    CREATE = 0x0000,                          // 创建状态（暂未init的情况，包含 destroy之后的情况）
-    NORMAL = 0x1000,                          // 正常执行状态
+    NORMAL = 0x0000,                          // 正常状态
     CANCEL = 0x1001,                          // 取消状态
-    YIELD = 0x1002,                           // 暂停状态
+    SUSPEND = 0x1002,                         // 暂停状态（同 v3.0.0版本之前的 YIELD 含义相同）
     TIMEOUT = 0x1010,                         // 超时状态
 };
 using GPipelineState = GElementState;         // pipeline 同element共享状态
@@ -58,6 +57,7 @@ enum class GElementShape {
     NORMAL = 0,                               // 普通的元素
     LINKABLE = 1,                             // 后继是唯一元素的情况（类似 list）
     ROOT = 2,                                 // 所有后继元素，只有一个前驱的情况（类似tree root）
+    TAIL = 3,                                 // 尾部节点
 };
 CGRAPH_INTERNAL_NAMESPACE_END
 

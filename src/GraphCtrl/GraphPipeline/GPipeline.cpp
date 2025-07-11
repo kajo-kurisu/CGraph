@@ -18,6 +18,7 @@ GPipeline::GPipeline() {
     param_manager_ = CGRAPH_SAFE_MALLOC_COBJECT(GParamManager)
     daemon_manager_ = CGRAPH_SAFE_MALLOC_COBJECT(GDaemonManager)
     event_manager_ = CGRAPH_SAFE_MALLOC_COBJECT(GEventManager)
+    stage_manager_ = CGRAPH_SAFE_MALLOC_COBJECT(GStageManager)
 }
 
 
@@ -27,13 +28,14 @@ GPipeline::~GPipeline() {
     CGRAPH_DELETE_PTR(element_manager_)
     CGRAPH_DELETE_PTR(param_manager_)
     CGRAPH_DELETE_PTR(event_manager_)
+    CGRAPH_DELETE_PTR(stage_manager_)
 }
 
 
 CStatus GPipeline::init() {
     CGRAPH_FUNCTION_BEGIN
     CGRAPH_ASSERT_INIT(false)    // 必须是非初始化的状态下，才可以初始化。反之同理
-    CGRAPH_ASSERT_NOT_NULL(element_manager_, param_manager_, daemon_manager_, event_manager_)
+    CGRAPH_ASSERT_NOT_NULL(element_manager_, param_manager_, daemon_manager_, event_manager_, stage_manager_)
 
     status += initEnv();
     CGRAPH_FUNCTION_CHECK_STATUS
@@ -41,6 +43,7 @@ CStatus GPipeline::init() {
     status += param_manager_->init();
     status += event_manager_->init();
     status += element_manager_->init();
+    status += stage_manager_->init();
     status += daemon_manager_->init();    // daemon的初始化，需要晚于所有element的初始化
     CGRAPH_FUNCTION_CHECK_STATUS
 
@@ -90,6 +93,7 @@ CStatus GPipeline::destroy() {
     status += event_manager_->destroy();
     status += daemon_manager_->destroy();
     status += element_manager_->destroy();
+    status += stage_manager_->destroy();
     status += param_manager_->destroy();
     CGRAPH_FUNCTION_CHECK_STATUS
 
@@ -151,23 +155,23 @@ CStatus GPipeline::registerGGroup(GElementPPtr groupRef, const GElementPtrSet &d
 }
 
 
-std::future<CStatus> GPipeline::asyncRun() {
+std::future<CStatus> GPipeline::asyncRun(std::launch policy) {
     /**
      * 1. 确认当前pipeline已经初始化完毕
      * 2. 异步的执行 run() 方法，并且返回执行结果的 future 信息
      */
     CGRAPH_ASSERT_INIT_THROW_ERROR(true)
 
-    return std::async(std::launch::async, [this] {
+    return std::async(policy, [this] {
         return run();
     });
 }
 
 
-std::future<CStatus> GPipeline::asyncProcess(CSize runTimes) {
+std::future<CStatus> GPipeline::asyncProcess(CSize runTimes, std::launch policy) {
     CGRAPH_ASSERT_INIT_THROW_ERROR(false)
 
-    return std::async(std::launch::async, [runTimes, this] {
+    return std::async(policy, [runTimes, this] {
         return process(runTimes);
     });
 }
@@ -179,9 +183,9 @@ CStatus GPipeline::cancel() {
 }
 
 
-CStatus GPipeline::yield() {
+CStatus GPipeline::suspend() {
     CGRAPH_ASSERT_INIT(true)
-    return repository_.pushAllState(GElementState::YIELD);
+    return repository_.pushAllState(GElementState::SUSPEND);
 }
 
 
@@ -218,6 +222,7 @@ CStatus GPipeline::perf(std::ostream& oss) {
     status = GPerf::perf(this, oss);
     CGRAPH_FUNCTION_END
 }
+
 
 
 GPipelinePtr GPipeline::setGEngineType(GEngineType type) {
@@ -329,6 +334,7 @@ CStatus GPipeline::initEnv() {
     element_manager_->setThreadPool(tp);
 
     // 设置所有的element 中的thread_pool
+    repository_.fetch(element_manager_);
     repository_.setThreadPool(tp);
     status += repository_.init();
     CGRAPH_FUNCTION_END
@@ -345,13 +351,67 @@ CStatus GPipeline::innerRegister(GElementPtr element, const GElementPtrSet &depe
     status = element->addElementInfo(depends, curName, loop);
     CGRAPH_FUNCTION_CHECK_STATUS
 
-    status = element->addManagers(param_manager_, event_manager_);
+    status = element->addManagers(param_manager_, event_manager_, stage_manager_);
     CGRAPH_FUNCTION_CHECK_STATUS
     status = element_manager_->add(element);
     CGRAPH_FUNCTION_CHECK_STATUS
     repository_.insert(element);
 
     CGRAPH_FUNCTION_END
+}
+
+
+CStatus GPipeline::__registerGElement_4py(CGraph::GElementPtr element, const CGraph::GElementPtrSet &depends,
+                                         const std::string &name, CSize loop) {
+    return innerRegister(element, depends, name, loop);
+}
+
+
+GPipelinePtr GPipeline::__addGEvent_4py(GEventPtr event, const std::string& key) {
+    CGRAPH_FUNCTION_BEGIN
+    CGRAPH_ASSERT_NOT_NULL_THROW_ERROR(event, event_manager_, param_manager_)
+    event_manager_->param_manager_ = this->param_manager_;
+    status = event_manager_->__create_4py(event, key);
+    CGRAPH_THROW_EXCEPTION_BY_STATUS(status)
+
+    return this;
+}
+
+
+GPipelinePtr GPipeline::__addGDaemon_4py(GDaemonPtr daemon, CMSec ms) {
+    CGRAPH_FUNCTION_BEGIN
+    CGRAPH_ASSERT_NOT_NULL_THROW_ERROR(daemon, param_manager_, event_manager_, daemon_manager_)
+    daemon->setGParamManager(this->param_manager_);
+    daemon->setGEventManager(this->event_manager_);
+    daemon->setInterval(ms);
+    status = daemon_manager_->add(daemon);
+    CGRAPH_THROW_EXCEPTION_BY_STATUS(status)
+    return this;
+}
+
+
+GPipelinePtr GPipeline::__addGStage_4py(GStagePtr stage, const std::string& key, CInt threshold) {
+    CGRAPH_FUNCTION_BEGIN
+    CGRAPH_ASSERT_NOT_NULL_THROW_ERROR(stage, param_manager_, stage_manager_)
+    stage_manager_->setGParamManager(param_manager_);
+    stage_manager_->__create_4py(stage, key, threshold);
+    return this;
+}
+
+
+std::string GPipeline::__dump_4py() {
+    std::ostringstream oss;
+    auto status = this->dump(oss);
+    CGRAPH_THROW_EXCEPTION_BY_STATUS(status);
+    return oss.str();
+}
+
+
+std::string GPipeline::__perf_4py() {
+    std::ostringstream oss;
+    auto status = this->perf(oss);
+    CGRAPH_THROW_EXCEPTION_BY_STATUS(status);
+    return oss.str();
 }
 
 CGRAPH_NAMESPACE_END

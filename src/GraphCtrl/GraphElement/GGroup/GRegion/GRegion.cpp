@@ -8,6 +8,7 @@
 
 #include "GRegion.h"
 #include "../../_GOptimizer/GOptimizerInclude.h"
+
 CGRAPH_NAMESPACE_BEGIN
 
 GRegion::GRegion() : GGroup() {
@@ -58,7 +59,7 @@ CStatus GRegion::run() {
 }
 
 
-CStatus GRegion::addElement(GElementPtr element) {
+CStatus GRegion::addElementEx(GElementPtr element) {
     CGRAPH_FUNCTION_BEGIN
     CGRAPH_ASSERT_NOT_NULL(element, manager_)
 
@@ -100,23 +101,6 @@ CBool GRegion::isSerializable() const {
     }
 
     return manager_->checkSerializable();
-}
-
-
-CStatus GRegion::addManagers(GParamManagerPtr paramManager,
-                             GEventManagerPtr eventManager) {
-    CGRAPH_FUNCTION_BEGIN
-    CGRAPH_ASSERT_INIT(false)
-    CGRAPH_ASSERT_NOT_NULL(paramManager, eventManager)
-
-    this->setGParamManager(paramManager);
-    this->setGEventManager(eventManager);
-    for (auto* cur : manager_->manager_elements_) {
-        CGRAPH_ASSERT_NOT_NULL(cur)
-        status += cur->addManagers(paramManager, eventManager);
-    }
-
-    CGRAPH_FUNCTION_END
 }
 
 

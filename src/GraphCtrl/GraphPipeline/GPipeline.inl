@@ -29,10 +29,15 @@ CStatus GPipeline::registerGElement(GElementPPtr elementRef,
          * 如果是GGroup类型的信息，则：
          * 1，必须外部创建
          * 2，未被注册到其他的pipeline中
+         * 3，group 类型必须正确
          */
         if ((*elementRef) != nullptr
             && ((*elementRef)->isRegistered())) {
             CGRAPH_RETURN_ERROR_STATUS("this group register duplicate")
+        }
+
+        if (typeid(**elementRef) != typeid(T)) {
+            CGRAPH_RETURN_ERROR_STATUS("register group type is not suitable")
         }
     } else if (std::is_base_of<GNode, T>::value || std::is_base_of<GAdapter, T>::value) {
         /**
@@ -159,7 +164,6 @@ TGroup* GPipeline::createGGroup(const GElementPtrArr &elements,
     auto* group = CGRAPH_SAFE_MALLOC_COBJECT(TGroup)
     for (GElementPtr element : elements) {
         status += group->addElement(element);
-        element->belong_ = group;    // 从属于这个group的信息
     }
     CGRAPH_THROW_EXCEPTION_BY_STATUS(status)
 
@@ -217,7 +221,7 @@ GPipelinePtr GPipeline::addGDaemon(CMSec ms, Args&&... args) {
     CGRAPH_ASSERT_INIT_THROW_ERROR(false)
     CGRAPH_ASSERT_NOT_NULL_THROW_ERROR(param_manager_, daemon_manager_)
 
-    auto daemon = UAllocator::safeMallocTemplateCObject<TDaemon>(std::forward<Args &&>(args)...);
+    auto daemon = CAllocator::safeMallocTemplateCObject<TDaemon>(std::forward<Args &&>(args)...);
     daemon->setInterval(ms);
     daemon->setGParamManager(this->param_manager_);
     daemon->setGEventManager(this->event_manager_);
@@ -240,6 +244,20 @@ GPipelinePtr GPipeline::addGEvent(const std::string& key, TParam* param) {
     status = event_manager_->createWithParam<TEvent, TParam>(key, param);
     CGRAPH_THROW_EXCEPTION_BY_STATUS(status)
 
+    return this;
+}
+
+
+template<typename TStage, typename TParam,
+        c_enable_if_t<std::is_base_of<GStage, TStage>::value, int>,
+        c_enable_if_t<std::is_base_of<GStageParam, TParam>::value, int>>
+GPipelinePtr GPipeline::addGStage(const std::string& key, CInt threshold, TParam* param) {
+    CGRAPH_ASSERT_INIT_THROW_ERROR(false)
+    CGRAPH_ASSERT_NOT_NULL_THROW_ERROR(stage_manager_, param_manager_)
+    CGRAPH_THROW_EXCEPTION_BY_CONDITION(threshold <= 0, "threshold value must bigger than 0")
+
+    stage_manager_->setGParamManager(param_manager_);
+    stage_manager_->create<TStage, TParam>(key, threshold, param);
     return this;
 }
 

@@ -11,6 +11,7 @@
 
 #include "GElementObject.h"
 #include "GElement.h"
+#include "GElementManager.h"
 
 CGRAPH_NAMESPACE_BEGIN
 
@@ -58,6 +59,14 @@ private:
     CStatus pushAllState(const GElementState& state);
 
     /**
+     * 将 element manager 中的信息，同步到本地
+     * @param em
+     * @return
+     * @notice 部分element 随着 group注册进来（特别是 python版本中），在这里做一次查缺补漏
+     */
+    CVoid fetch(GElementManagerCPtr em);
+
+    /**
      * 用于判断是否是出于退出状态
      * @return
      */
@@ -73,7 +82,7 @@ private:
 
 private:
     GElementPtrSet elements_ {};                                    // 用于记录所有的element信息
-    GElementState cur_state_ { GElementState::CREATE };             // 当前状态信息
+    GElementState cur_state_ { GElementState::NORMAL };             // 当前状态信息
     GElementPtrSet async_elements_ {};                              // 所有异步执行的逻辑，到后来一次性统一获取执行结果信息
 
     friend class GPipeline;

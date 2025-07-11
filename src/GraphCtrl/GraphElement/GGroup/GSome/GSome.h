@@ -22,8 +22,6 @@ class GSome : public GGroup {
 protected:
     explicit GSome();
 
-    CStatus addElement(GElementPtr element) final;
-
     CStatus run() final;
 
     CBool isSerializable() const final;
@@ -37,6 +35,9 @@ protected:
     CGRAPH_NO_ALLOWED_COPY(GSome)
 
 private:
+    CStatus addElementEx(GElementPtr element) final;
+
+private:
     CInt left_num_ = 0;                        // 还剩的触发结束的个数
     CStatus cur_status_ ;                      // 记录异步时刻的当前状态信息
 
@@ -45,7 +46,7 @@ private:
 
     friend class GPipeline;
     friend class GDynamicEngine;
-    friend class UAllocator;
+    friend class CAllocator;
 };
 
 CGRAPH_NAMESPACE_END

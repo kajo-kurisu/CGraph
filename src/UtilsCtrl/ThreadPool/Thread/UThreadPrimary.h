@@ -197,7 +197,7 @@ protected:
      * @return
      */
     CBool stealTask(UTaskRef task) {
-        if (unlikely(pool_threads_->size() < config_->default_thread_size_)) {
+        if (unlikely(pool_threads_->size() < (CSize)(config_->default_thread_size_))) {
             /**
              * 线程池还未初始化完毕的时候，无法进行steal。
              * 确保程序安全运行。
@@ -235,7 +235,7 @@ protected:
      * @return
      */
     CBool stealTask(UTaskArrRef tasks) {
-        if (unlikely(pool_threads_->size() != config_->default_thread_size_)) {
+        if (unlikely(pool_threads_->size() != (CSize)(config_->default_thread_size_))) {
             return false;
         }
 
@@ -296,7 +296,7 @@ private:
     std::vector<CInt> steal_targets_;                              // 被偷的目标信息
 
     friend class UThreadPool;
-    friend class UAllocator;
+    friend class CAllocator;
 };
 
 using UThreadPrimaryPtr = UThreadPrimary *;

@@ -2,7 +2,7 @@
 set_project("CGraph")
 
 -- set project version
-set_version("2.6.1")
+set_version("3.1.1")
 
 -- set language: c++11
 set_languages("c++11")
@@ -36,7 +36,7 @@ tutorial_list = {
         "T17-MessagePubSub",
         "T18-Event",
         "T19-Cancel",
-        "T20-YieldResume",
+        "T20-Suspend",
         "T21-MultiCondition",
         "T22-Timeout",
         "T23-Some",
@@ -44,6 +44,7 @@ tutorial_list = {
         "T25-Coordinator",
         "T26-Mutable",
         "T27-Trim",
+        "T28-Stage",
 }
 
 -- add tutorial target one by one

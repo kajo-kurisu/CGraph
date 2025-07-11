@@ -15,34 +15,36 @@ CStatus GDynamicEngine::setup(const GSortedGElementPtrSet& elements) {
     /**
      * 1. 判断是否是 dag 结构
      * 2. 标记数据，比如有多少个结束element等
-     * 3. 标记哪些数据，是linkable 的
+     * 3. 计算element的结构类型
      * 4. 分析当前dag类型信息
      */
     CGRAPH_RETURN_ERROR_STATUS_BY_CONDITION(!GEngine::isDag(elements),
                                             "it is not a dag struct");
     mark(elements);
-    link(elements);
+    calcShape(elements);
     analysisDagType(elements);
     CGRAPH_FUNCTION_END
 }
 
 
 CStatus GDynamicEngine::run() {
-    CGRAPH_FUNCTION_BEGIN
     cur_status_.reset();
 
-    if (internal::GEngineDagType::COMMON == dag_type_) {
-        commonRunAll();
-    } else if (internal::GEngineDagType::ALL_SERIAL == dag_type_) {
-        serialRunAll();
-    } else if (internal::GEngineDagType::ALL_PARALLEL == dag_type_) {
-        parallelRunAll();
-    } else {
-        CGRAPH_RETURN_ERROR_STATUS("unknown engine dag type")
+    switch (dag_type_) {
+        case internal::GEngineDagType::COMMON:
+            commonRunAll();
+            break;
+        case internal::GEngineDagType::ALL_SERIAL:
+            serialRunAll();
+            break;
+        case internal::GEngineDagType::ALL_PARALLEL:
+            parallelRunAll();
+            break;
+        default:
+            CGRAPH_RETURN_ERROR_STATUS("unknown engine dag type");
     }
 
-    status = cur_status_;
-    CGRAPH_FUNCTION_END
+    return cur_status_;
 }
 
 
@@ -90,8 +92,31 @@ CVoid GDynamicEngine::analysisDagType(const GSortedGElementPtrSet& elements) {
         dag_type_ = internal::GEngineDagType::ALL_SERIAL;
     } else if (total_element_arr_.size() == total_end_size_ && front_element_arr_.size() == total_end_size_) {
         dag_type_ = internal::GEngineDagType::ALL_PARALLEL;
+        analysisParallelMatrix();
     } else {
         dag_type_ = internal::GEngineDagType::COMMON;
+    }
+}
+
+
+CVoid GDynamicEngine::analysisParallelMatrix() {
+    parallel_element_matrix_.clear();
+    const auto& config = thread_pool_->getConfig();
+    CSize thdSize = config.default_thread_size_ + config.secondary_thread_size_;
+    CGRAPH_THROW_EXCEPTION_BY_CONDITION(thdSize <= 0,
+                                        "default thread size cannot smaller than 1");
+    CSize taskNumPerThd = total_end_size_ / thdSize + (CSize)(0 != total_end_size_ % thdSize);
+    CGRAPH_THROW_EXCEPTION_BY_CONDITION(taskNumPerThd == 0,
+                                        "task number per thread is 0");
+
+    CSize curIndex = 0;
+    while (curIndex < total_end_size_) {
+        CSize curEnd = curIndex + taskNumPerThd < total_end_size_ ? curIndex + taskNumPerThd : total_end_size_ ;
+        GElementPtrArr curArr(total_element_arr_.data() + curIndex, total_element_arr_.data() + curEnd);
+        CGRAPH_THROW_EXCEPTION_BY_CONDITION(curArr.empty(),
+                                            "current elements array cannot be empty");
+        parallel_element_matrix_.push_back(curArr);
+        curIndex += taskNumPerThd;
     }
 }
 
@@ -101,63 +126,80 @@ CVoid GDynamicEngine::process(GElementPtr element, CBool affinity) {
         return;
     }
 
-    const auto& exec = [this, element] {
-        element->beforeRun();
-        const CStatus& curStatus = element->fatProcessor(CFunctionType::RUN);
-        if (unlikely(curStatus.isErr())) {
-            // 当且仅当整体状正常，且当前状态异常的时候，进入赋值逻辑。确保不重复赋值
-            CGRAPH_LOCK_GUARD lk(status_lock_);
-            cur_status_ += curStatus;
-        }
-        afterElementRun(element);
-    };
-
     if (affinity && element->isDefaultBinding()) {
         // 如果 affinity=true，表示用当前的线程，执行这个逻辑。以便增加亲和性
-        exec();
+        innerExec(element);
     } else {
-        thread_pool_->execute(exec, element->binding_index_);
+        thread_pool_->execute([this, element] {
+            this->innerExec(element); }, element->binding_index_);
+    }
+}
+
+
+CVoid GDynamicEngine::innerExec(GElementPtr element) {
+    element->refresh();
+    const CStatus& curStatus = element->fatProcessor(CFunctionType::RUN);
+    if (likely(curStatus.isNotErr())) {
+        afterElementRun(element);
+    } else {
+        // 遇到异常情况，结束整体逻辑
+        CGRAPH_LOCK_GUARD lk(status_lock_);
+        cur_status_ += curStatus;
+        locker_.cv_.notify_one();
     }
 }
 
 
 CVoid GDynamicEngine::afterElementRun(GElementPtr element) {
     element->done_ = true;
-    if (!element->run_before_.empty() && cur_status_.isOK()) {
-        if (internal::GElementShape::LINKABLE == element->shape_) {
-            // 针对linkable 的情况，做特殊判定
-            process(*(element->run_before_.begin()), true);
-        } else {
-            GElementPtr reserved = nullptr;
-            for (auto* cur : element->run_before_) {
-                if (--cur->left_depend_ <= 0) {
-                    if (reserved) {
-                        process(cur, false);
-                    } else {
-                        reserved = cur;    // 留一个作为亲和性的，在当前线程运行
+    if (unlikely(cur_status_.isErr())) {
+        return;
+    }
+
+    switch (element->shape_) {
+        case internal::GElementShape::NORMAL:
+            {
+                GElementPtr reserved = nullptr;
+                for (auto* cur : element->run_before_) {
+                    if (--cur->left_depend_ <= 0) {
+                        if (reserved) {
+                            process(cur, false);
+                        } else {
+                            reserved = cur;    // 留一个作为亲和性的，在当前线程运行
+                        }
                     }
                 }
+
+                if (reserved) { process(reserved, true); }
             }
-            reserved ? process(reserved, true) : void();
-        }
-    } else {
-        CGRAPH_LOCK_GUARD lock(lock_);
-        /**
-         * 满足一下条件之一，则通知wait函数停止等待
-         * 1，无后缀节点全部执行完毕(在运行正常的情况下，只有无后缀节点执行完成的时候，才可能整体运行结束)
-         * 2，有节点执行状态异常
-         */
-        if ((element->run_before_.empty() && (++finished_end_size_ >= total_end_size_))
-            || cur_status_.isErr()) {
-            cv_.notify_one();
-        }
+            break;
+        case internal::GElementShape::LINKABLE:
+            process(element->run_before_.front(), true);
+            break;
+        case internal::GElementShape::ROOT:
+            for (auto* cur : element->run_before_) {
+                process(cur, element->run_before_.back() == cur);
+            }
+            break;
+        case internal::GElementShape::TAIL:
+            {
+                CGRAPH_LOCK_GUARD lock(locker_.mtx_);
+                if ((++finished_end_size_ >= total_end_size_)) {
+                    locker_.cv_.notify_one();
+                }
+            }
+            break;
+        default:
+            CGRAPH_LOCK_GUARD lk(status_lock_);
+            cur_status_.setErrorInfo("element shape type error");
+            break;
     }
 }
 
 
 CVoid GDynamicEngine::fatWait() {
-    CGRAPH_UNIQUE_LOCK lock(lock_);
-    cv_.wait(lock, [this] {
+    CGRAPH_UNIQUE_LOCK lock(locker_.mtx_);
+    locker_.cv_.wait(lock, [this] {
         /**
          * 遇到以下条件之一，结束执行：
          * 1，执行结束
@@ -171,21 +213,8 @@ CVoid GDynamicEngine::fatWait() {
 #ifdef _CGRAPH_PARALLEL_MICRO_BATCH_ENABLE_
 CVoid GDynamicEngine::parallelRunAll() {
     // 微任务模式，主要用于性能测试的场景下
-    const UThreadPoolConfig& config = thread_pool_->getConfig();
-    CSize thdNum = config.default_thread_size_ + config.secondary_thread_size_;
-    CGRAPH_THROW_EXCEPTION_BY_CONDITION(thdNum <= 0,
-                                        "default thread size cannot smaller than 1");
-
     std::vector<std::future<CStatus>> futures;
-    CSize taskNumPerThd = total_end_size_ / thdNum + (CSize)(0 != total_end_size_ % thdNum);
-    for (int i = 0; i < thdNum; i++) {
-        GElementPtrArr elements;
-        for (int j = 0; j < taskNumPerThd; j++) {
-            auto cur = i * taskNumPerThd + j;
-            if (cur < total_end_size_) {
-                elements.emplace_back(front_element_arr_[cur]);
-            }
-        }
+    for (auto& elements : parallel_element_matrix_) {
         auto curFut = thread_pool_->commit([elements] {
             CGRAPH_FUNCTION_BEGIN
             for (auto* element : elements) {
@@ -203,25 +232,57 @@ CVoid GDynamicEngine::parallelRunAll() {
 }
 #else
 CVoid GDynamicEngine::parallelRunAll() {
-    /**
-     * 主要适用于dag是纯并发逻辑的情况
-     * 直接并发的执行所有的流程，从而减少调度损耗
-     * 实测效果，在32路纯并行的情况下，整体耗时从 21.5s降低到 12.5s
-     * 非纯并行逻辑，不走此函数
-     */
-    std::vector<std::future<CStatus>> futures;
-    futures.reserve(total_end_size_);
-    for (int i = 0; i < total_end_size_; i++) {
-        futures.emplace_back(std::move(thread_pool_->commit([this, i] {
-            return total_element_arr_[i]->fatProcessor(CFunctionType::RUN);
-        }, total_element_arr_[i]->binding_index_)));
+    parallel_run_num_ = 0;
+    for (CIndex i = 0; i < (CIndex)parallel_element_matrix_.size(); i++) {
+        auto& curArr = parallel_element_matrix_[i];
+        if (curArr.size() > 1) {
+            for (const auto& element : curArr) {
+                thread_pool_->executeWithTid([this, element] { parallelRunOne(element); }, i,
+                                             element == curArr.front() || element == curArr.back(),
+                                             element == curArr.front());
+            }
+        } else {
+            // 仅有一个任务的情况，无法使用 executeWithTid 函数，故走这边的逻辑
+            const auto& element = curArr.front();
+            thread_pool_->execute([this, element] {
+                parallelRunOne(element); }, element->binding_index_);
+        }
     }
 
-    for (auto& fut : futures) {
-        cur_status_ += fut.get();
+    if (parallel_element_matrix_.size() < (CSize)(thread_pool_->getConfig().default_thread_size_)) {
+        // 确保所有的 pt 都可以被唤醒，从而快速执行
+        thread_pool_->wakeupAllThread();
+    }
+
+    {
+        CGRAPH_UNIQUE_LOCK lock(locker_.mtx_);
+        locker_.cv_.wait(lock, [this] {
+            return (parallel_run_num_ >= total_end_size_ || cur_status_.isErr());
+        });
     }
 }
 #endif
+
+
+CVoid GDynamicEngine::parallelRunOne(GElementPtr element) {
+    if (unlikely(cur_status_.isErr())) {
+        return;
+    }
+
+    auto status = element->fatProcessor(CFunctionType::RUN);
+    if (unlikely(status.isErr())) {
+        {
+            CGRAPH_LOCK_GUARD lk(status_lock_);
+            cur_status_ += status;
+        }
+    }
+
+    auto finishedSize = parallel_run_num_.fetch_add(1, std::memory_order_release) + 1;
+    if (finishedSize >= total_end_size_ || cur_status_.isErr()) {
+        CGRAPH_UNIQUE_LOCK lock(locker_.mtx_);
+        locker_.cv_.notify_one();
+    }
+}
 
 
 CVoid GDynamicEngine::serialRunAll() {
